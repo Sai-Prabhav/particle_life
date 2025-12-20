@@ -15,7 +15,7 @@ SFML   := -lsfml-graphics -lsfml-window -lsfml-system
 # Common flags
 # ========================
 
-WARNINGS := -Wall -Wextra -Wpedantic -Wshadow -Wconversion \
+WARNINGS := -Wpedantic -Wshadow \
            -Wfloat-equal -Wno-unused-parameter
 
 COMMON := $(STD) $(WARNINGS)  
@@ -26,12 +26,12 @@ COMMON := $(STD) $(WARNINGS)
 # ========================
 
 DEBUG_FLAGS := \
-	-O0 \
+	-O1 \
 	-g3 \
 	-fsanitize=address,undefined \
+	-fhardened\
 	-fno-omit-frame-pointer \
 	-fstack-protector-strong \
-	-D_GLIBCXX_ASSERTIONS \
 	-DDEBUG
 
 DEBUG := $(COMMON) $(DEBUG_FLAGS)
