@@ -1,2 +1,3 @@
-./particle_life*
+./particle_life
+./particle_life_debug
 ./.gitignore
