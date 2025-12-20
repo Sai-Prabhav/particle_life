@@ -146,7 +146,7 @@ public:
 
       sf::Vector2f dis = velocities[i] * elapsed.asSeconds();
       moveVertex(i, dis);
-      handelBoundary(i, width, height);
+      handleBoundary(i, width, height);
       velocities[i] *=
           std::exp(std::log(drag) * elapsed.asSeconds());
     }
@@ -214,7 +214,7 @@ private:
     }
   }
 
-  inline void handelBoundary(int i, float width, float height) {
+  inline void handleBoundary(int i, float width, float height) {
 
     if (edge == Edge::Bounce) {
       if (positions[i].x < 0) {
@@ -281,8 +281,8 @@ private:
   }
 };
 
-int numPar;
-int numTypes;
+int numParticles;
+int numParticleTypes;
 float drag = 0.05, speed = 1;
 float w, h;
 bool isClean = true;
@@ -367,19 +367,19 @@ int main(int argc, char **argv) {
 
   sf::RenderWindow window(sf::VideoMode({300, 300}),
                           "My window");
-  if (argc != 2) {
+  if (argc != 3) {
     std::cout << "Usage main numberParticle numberTypes";
     return -1;
   }
-  numPar = std::stoi(argv[1]);
-  numTypes = std::stoi(argv[2]);
+  numParticles = std::stoi(argv[1]);
+  numParticleTypes = std::stoi(argv[2]);
 
   sf::Vector2u size = window.getSize();
   w = static_cast<float>(size.x);
   h = static_cast<float>(size.y);
-  Particles paraticles(numPar, numTypes,
-                       Particles::Shape::Triangle,
-                       Particles::Edge::Curve, w, h, drag);
+  Particles particles(numParticles, numParticleTypes,
+                      Particles::Shape::Triangle,
+                      Particles::Edge::Curve, w, h, drag);
   sf::Time totalTime(sf::Time::Zero);
   sf::Clock clock;
   int frameNumber = 0;
@@ -397,14 +397,14 @@ int main(int argc, char **argv) {
       infoText.setString(
           "FPS: " + std::to_string(fps) +
           "\nSpeed: " + std::to_string(speed) + "\nDrag: " +
-          std::to_string(paraticles.drag) + "\nRange: " +
-          std::to_string(static_cast<int>(paraticles.cutoff)));
+          std::to_string(particles.drag) + "\nRange: " +
+          std::to_string(static_cast<int>(particles.cutoff)));
       totalTime = sf::Time::Zero;
       frameNumber = 0;
     }
     // std::cout << 1 / time.asSeconds() << "\n";
-    handleInput(&window, &paraticles);
-    paraticles.update(time * speed, w, h);
-    draw(&window, &paraticles, time, &infoText);
+    handleInput(&window, &particles);
+    particles.update(time * speed, w, h);
+    draw(&window, &particles, time, &infoText);
   }
 }
