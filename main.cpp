@@ -154,11 +154,12 @@ private:
   std::vector<sf::Vector2f> pos;
 
   inline float func(float r) {
+
+    return 1 / (r * r) * (r - 1) * (r - 50);
     return 500000 * std::exp(r * -0.000001) *
            std::sin(sf::priv::pi * 2 * numRegions / cutoff *
                     r) /
            r;
-    return 1 / (r * r) * (r - 1) * (r - 50);
   }
 
   void initVertices() {
@@ -276,7 +277,7 @@ private:
 
 int numPar;
 int numTypes;
-float drag, speed;
+float drag = 0.05, speed = 1;
 float w, h;
 bool isClean = true;
 
@@ -359,10 +360,12 @@ int main(int argc, char **argv) {
 
   sf::RenderWindow window(sf::VideoMode({300, 300}),
                           "My window");
+  if (argc != 2) {
+    std::cout << "Usage main numberParticle numberTypes";
+    return -1;
+  }
   numPar = std::stoi(argv[1]);
   numTypes = std::stoi(argv[2]);
-  drag = std::stof(argv[3]);
-  speed = std::stof(argv[4]);
 
   sf::Vector2u size = window.getSize();
   w = static_cast<float>(size.x);
