@@ -18,14 +18,11 @@ The fascinating aspect of this simulation is the emergent behavior that arises f
 ## Showcase
 
 
-### Videos
-
-[Link to a video of your particle life simulation]
 
 ### Photos
 
 ![Example 1](./showcase/example1.jpg)
-![Example 2](./showcase/example1.jpg)
+![Example 2](./showcase/example2.jpg)
 ![Example 3](./showcase/example3.jpg)
 ## Implementation
 
