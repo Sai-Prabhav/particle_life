@@ -8,6 +8,7 @@
 #include <vector>
 
 class Particles : public sf::Drawable, public sf::Transformable {
+
 public:
   struct ParticleType {
     float mass;
@@ -18,6 +19,7 @@ public:
   };
 
   enum class Shape { Point, Triangle };
+  enum class Edge { Pass, Bounce, Curve };
 
   static std::vector<ParticleType> randTypes(int typeCount, float drag) {
     std::vector<ParticleType> typeData(typeCount);
@@ -39,8 +41,8 @@ public:
             randFloats(-0.01f, 0.01f, typeCount)};
   }
 
-  Particles(int particleCount, int typeCount, Shape shape_, float w, float h,
-            float drag)
+  Particles(int particleCount, int typeCount, Shape shape_, Edge edge_, float w,
+            float h, float drag)
       : typeData(typeCount), type(particleCount), vel(particleCount, {0.0f, 0.0f}),
         pos(particleCount) {
     if (shape == Shape::Point) {
@@ -52,10 +54,12 @@ public:
 
       m_vertices.setPrimitiveType(sf::PrimitiveType::Triangles);
     }
+    edge = edge_;
     shape = shape_;
     typeData = randTypes(typeCount, drag);
     initVertices();
     printTypes();
+
     for (int i = 0; i < particleCount; i++) {
       type[i] = randInt(typeCount);
 
@@ -64,6 +68,7 @@ public:
       vel[i] = {randFloat(0.1f, 1.0f), randFloat(0.1f, 1.0f)};
     }
   }
+
   void reset(float w, float h, float drag) {
 
     int particleCount = vel.size();
@@ -80,6 +85,7 @@ public:
     printTypes();
     initVertices();
   }
+
   void printPos() {
     for (int i = 0; i < vel.size(); i++) {
       std::cout << i << " :";
@@ -91,6 +97,7 @@ public:
                 << m_vertices[i * 3 + 2].position.y << "\n";
     }
   }
+
   void update(sf::Time elapsed, float width, float height) {
 #pragma omp parallel for
     for (int i = 0; i < vel.size(); i++) {
@@ -100,7 +107,7 @@ public:
         if (i == j) {
           continue;
         }
-        float cutoff = 400.f;
+        float cutoff = 100.f;
         float cutoff2 = cutoff * cutoff;
 
         sf::Vector2f diff = pos[i] - pos[j];
@@ -109,28 +116,11 @@ public:
         if (d2 > cutoff2 || d2 < 1e-6f)
           continue;
 
-        float x = d2;
-        force += (typeData[type[i]].coff[type[j]] * typeData[type[i]].mass * 100 *
-                  typeData[type[j]].mass * diff) *
-                 (1 / (x * x) * (x - 50) * (x - 1));
+        force += (typeData[type[i]].coff[type[j]] * typeData[type[j]].mass * diff) *
+                 func(d2);
       }
-
-      vel[i] += force * elapsed.asSeconds() / typeData[type[i]].mass;
-      if (pos[i].x < 0) {
-        vel[i].x = std::abs(vel[i].x);
-      }
-      if (pos[i].y < 0) {
-
-        vel[i].y = std::abs(vel[i].y);
-      }
-      if (pos[i].x > (width - 10)) {
-
-        vel[i].x = -std::abs(vel[i].x);
-      }
-      if (pos[i].y > (height - 10)) {
-
-        vel[i].y = -std::abs(vel[i].y);
-      }
+      handelBoundry(i, width, height);
+      vel[i] += force * elapsed.asSeconds();
       vel[i] *= std::exp(std::log(typeData[type[i]].drag) * elapsed.asSeconds());
     }
     moveVertices(elapsed);
@@ -142,11 +132,14 @@ private:
   std::vector<int> type;
   std::vector<sf::Vector2f> vel;
   std::vector<sf::Vector2f> pos;
-  Shape shape = Shape::Point;
+  Shape shape = Shape::Triangle;
+  Edge edge = Edge::Bounce;
+  inline float func(float r) { return 1 / (r * r) * (r - 1) * (r - 50); }
 
   void initVertices() {
 
     for (int i = 0; i < vel.size(); i++) {
+
       if (shape == Shape::Point) {
         m_vertices[i].position = pos[i];
         m_vertices[i].color = typeData[type[i]].color;
@@ -168,19 +161,58 @@ private:
       }
     }
   }
+
+  inline void moveVertice(int i, sf::Vector2f dis) {
+    pos[i] += dis;
+    if (shape == Shape::Triangle) {
+
+      m_vertices[i * 3].position += dis;
+      m_vertices[i * 3 + 1].position += dis;
+      m_vertices[i * 3 + 2].position += dis;
+    } else if (shape == Shape::Point) {
+      m_vertices[i].position += dis;
+    }
+  }
   void moveVertices(sf::Time elapsed) {
 
 #pragma omp parallel for
     for (int i = 0; i < vel.size(); i++) {
       sf::Vector2f dis = vel[i] * elapsed.asSeconds();
-      pos[i] += dis;
-      if (shape == Shape::Triangle) {
+      moveVertice(i, dis);
+    }
+  }
 
-        m_vertices[i * 3].position += dis;
-        m_vertices[i * 3 + 1].position += dis;
-        m_vertices[i * 3 + 2].position += dis;
-      } else if (shape == Shape::Point) {
-        m_vertices[i].position += dis;
+  inline void handelBoundry(int i, float width, float height) {
+
+    if (edge == Edge::Bounce) {
+      if (pos[i].x < 0) {
+        vel[i].x = std::abs(vel[i].x);
+      }
+      if (pos[i].y < 0) {
+
+        vel[i].y = std::abs(vel[i].y);
+      }
+      if (pos[i].x > (width - 10)) {
+
+        vel[i].x = -std::abs(vel[i].x);
+      }
+      if (pos[i].y > (height - 10)) {
+
+        vel[i].y = -std::abs(vel[i].y);
+      }
+    } else if (edge == Edge::Pass) {
+      return;
+    } else if (edge == Edge::Curve) {
+      if (pos[i].x < 0) {
+        moveVertice(i, {width, 0});
+      } else if (pos[i].x > (width)) {
+        moveVertice(i, {-width, 0});
+      }
+      if (pos[i].y < 0) {
+        moveVertice(i, {0, height});
+      } else if (pos[i].y > height) {
+
+        moveVertice(i, {0, -height});
       }
     }
   }
@@ -221,6 +253,7 @@ float drag, speed;
 float w, h;
 
 void handelInput(sf::RenderWindow *window, Particles *par) {
+
   window->handleEvents([&window](const sf::Event::Closed &) { window->close(); },
                        [&](const sf::Event::MouseButtonPressed &mouse) {
                          std::cout << "Mouse clicked at: " << mouse.position.x
@@ -233,11 +266,12 @@ void handelInput(sf::RenderWindow *window, Particles *par) {
 
                          sf::View view(sf::FloatRect({0, 0}, {w, h}));
                          window->setView(view);
-                         std::cout << w << " " << h << "\n";
+                         std::cout << "Resized: " << w << " " << h << "\n";
                        });
 }
 
 void draw(sf::RenderWindow *win, Particles *par, sf::Time time, sf::Text *fpsText) {
+
   win->clear(sf::Color::Black);
   win->draw(*par);
   win->draw(*fpsText);
@@ -267,7 +301,8 @@ int main(int argc, char **argv) {
   sf::Vector2u size = window.getSize();
   w = static_cast<float>(size.x);
   h = static_cast<float>(size.y);
-  Particles par(numPar, numTypes, Particles::Shape::Point, w, h, drag);
+  Particles par(numPar, numTypes, Particles::Shape::Triangle,
+                Particles::Edge::Curve, w, h, drag);
   sf::Time totelTime(sf::Time::Zero);
   sf::Clock clock;
   int frameNumber = 0;
