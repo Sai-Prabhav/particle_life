@@ -6,14 +6,20 @@
 #include <SFML/System/Time.hpp>
 #include <SFML/System/Vector2.hpp>
 #include <SFML/Window/Keyboard.hpp>
+#include <algorithm>
 #include <cmath>
+#include <csignal>
+#include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
-class Particles : public sf::Drawable,
-                  public sf::Transformable {
+constexpr double C = 100.0;
+constexpr float sign(float x) { return x < 0 ? -1 : 1; }
+constexpr float min(float x, float y) { return x < y ? x : y; }
 
+class Particles : public sf::Drawable, public sf::Transformable {
 public:
   float drag;
   struct ParticleType {
@@ -21,24 +27,16 @@ public:
     sf::Color color;
     float radius;
     std::vector<float> coff;
-    std::vector<std::vector<float>> abc;
+    std::vector<float> coff_near;
+    std::vector<float> coff_far;
   };
 
   enum class Shape { Point, Triangle };
   enum class Edge { Pass, Bounce, Curve };
 
   Shape shape = Shape::Triangle;
-  Edge edge = Edge::Bounce;
-  float cutoff = 100.f;
-  int numRegions = 3;
-  std::vector<std::vector<float>> generateAbc() {
-    std::vector<std::vector<float>> res(numRegions, {0, 0, 0});
-    float c = 0.0f;
-    for (int j = 0; j < numRegions; j++) {
-      float next = randFloat(0, cutoff / numRegions);
-    }
-    return res;
-  }
+  Edge edge;
+  float cutoff = 100;
   static std::vector<ParticleType> randTypes(int typeCount) {
     std::vector<ParticleType> typeData(typeCount);
     for (int i = 0; i < typeCount; i++) {
@@ -49,19 +47,20 @@ public:
 
   static ParticleType randType(int typeCount) {
 
-    return {randFloat(0.1f, 1.0f),
-            {static_cast<uint8_t>(randInt(205) + 50),
-             static_cast<uint8_t>(randInt(205) + 50),
-             static_cast<uint8_t>(randInt(205) + 50)},
-            5,
-            randFloats(-0.01f, 0.01f, typeCount)};
+    return ParticleType{randFloat(0.1f, 1.0f),
+                        {static_cast<uint8_t>(randInt(205) + 50),
+                         static_cast<uint8_t>(randInt(205) + 50),
+                         static_cast<uint8_t>(randInt(205) + 50)},
+                        5,
+                        randFloats(-1.f, 1.f, typeCount),
+                        randFloats(100.f, 10.f, typeCount),
+                        randFloats(-10.f, -1.f, typeCount)};
   }
 
-  Particles(int particleCount, int typeCount, Shape shape_,
-            Edge edge_, float w, float h, float drag_)
+  Particles(int particleCount, int typeCount, Shape shape_, Edge edge_, float w,
+            float h, float drag_)
       : typeData(typeCount), typeId(particleCount),
-        velocities(particleCount, {0.0f, 0.0f}),
-        positions(particleCount) {
+        velocities(particleCount, {0.0f, 0.0f}), positions(particleCount) {
     if (shape == Shape::Point) {
       m_vertices.resize(velocities.size());
       m_vertices.setPrimitiveType(sf::PrimitiveType::Points);
@@ -81,11 +80,9 @@ public:
     for (int i = 0; i < particleCount; i++) {
       typeId[i] = randInt(typeCount);
 
-      sf::Vector2f p =
-          randPos(h, w, typeData[typeId[i]].radius);
+      sf::Vector2f p = randPos(h, w, typeData[typeId[i]].radius);
       positions[i] = p;
-      velocities[i] = {randFloat(0.1f, 1.0f),
-                       randFloat(0.1f, 1.0f)};
+      velocities[i] = {randFloat(-1.0f, 1.0f), randFloat(-1.0f, 1.0f)};
     }
   }
 
@@ -98,11 +95,9 @@ public:
     for (int i = 0; i < particleCount; i++) {
       typeId[i] = randInt(typeCount);
 
-      sf::Vector2f p =
-          randPos(h, w, typeData[typeId[i]].radius);
+      sf::Vector2f p = randPos(h, w, typeData[typeId[i]].radius);
       positions[i] = p;
-      velocities[i] = {randFloat(0.1f, 1.0f),
-                       randFloat(0.1f, 1.0f)};
+      velocities[i] = {randFloat(-1.0f, 1.0f), randFloat(1.0f, 1.0f)};
     }
     printTypes();
     initVertices();
@@ -121,34 +116,81 @@ public:
   }
 
   void update(sf::Time elapsed, float width, float height) {
-#pragma omp parallel for
+    double error = false;
+    const float cutoff2 = cutoff * cutoff;
+    const float cutoff_far2 = cutoff2 * 0.5f * 0.5f;
+    const float cutoff_near2 = 2;
+#pragma omp parallel for simd
     for (int i = 0; i < velocities.size(); i++) {
-      sf::Vector2f force{0, 0};
-
+      float force_x = 0.0, force_y = 0.0;
       for (int j = 0; j < velocities.size(); j++) {
-        if (i == j) {
-          continue;
+
+        float dx = positions[i].x - positions[j].x;
+        float dy = positions[i].y - positions[j].y;
+        float d2;
+        if (edge == Edge::Curve) {
+          if (std::abs(dx) > width / 2.0) {
+            dx = -sign(dx) * (width - std::abs(dx));
+          }
+          if (std::abs(dy) > height / 2.0) {
+            dy = -sign(dy) * (height - std::abs(dy));
+          }
         }
-        float cutoff2 = cutoff * cutoff;
-
-        sf::Vector2f diff = positions[i] - positions[j];
-        float d2 = diff.lengthSquared();
-
-        if (d2 > cutoff2 || d2 < 1e-6f)
+        d2 = dx * dx + dy * dy;
+        float cf = 0.0;
+        if (d2 > cutoff2 || d2 < 1 || i == j) {
           continue;
-
-        force += (typeData[typeId[i]].coff[typeId[j]] *
-                  typeData[typeId[j]].mass * diff) *
-                 calculateForce(d2);
+        } else if (d2 > cutoff_far2) {
+          cf = typeData[typeId[i]].coff_far[typeId[j]];
+        } else if (d2 > cutoff_near2 && d2 <= cutoff_far2) {
+          cf = typeData[typeId[i]].coff[typeId[j]];
+        } else if (d2 <= cutoff_near2) {
+          cf = typeData[typeId[i]].coff_near[typeId[j]];
+        }
+        float d = std::sqrt(d2 + 0.01);
+        force_x +=
+            (cf * typeData[typeId[j]].mass * dx) * calculateForce(d2) / d;
+        force_y +=
+            (cf * typeData[typeId[j]].mass * dy) * calculateForce(d2) / d;
       }
-      // force += -vel[i] * drag;
-      velocities[i] += force * elapsed.asSeconds();
 
+      /**
+       * Calculate relativistic velocity with initial velocity v0
+       *
+       * Analytical solution to the relativistic equation of motion:
+       *   dv/dt = F / (m * gamma^3)
+       *
+       * where gamma = 1 / sqrt(1 - v^2/c^2) is the Lorentz factor
+       *
+       * General solution with initial condition v(0) = v0:
+       *   v(t) = (gamma_0 * m * v0 + F*t) / sqrt(m^2 + (gamma_0*m*v0
+       * +F*t)^2/c^2)
+       **/
+
+      // std::cout << "total force done\n";
+      sf::Vector2f force{force_x, force_y};
+      auto v0 = velocities[i];
+      auto f = force - v0 * drag;
+      float m = typeData[typeId[i]].mass;
+      float t = elapsed.asSeconds();
+
+      float g0 = 1.0 / std::sqrt(1.0 - v0.lengthSquared() / (C * C));
+      const sf::Vector2f vel1 = g0 * v0 + f * (t / m);
+      velocities[i] = (vel1 / static_cast<float>(std::sqrt(
+                                  1.0f + vel1.lengthSquared() / (C * C))));
+      if (velocities[i].lengthSquared() >= C * C) {
+        auto v1 = velocities[i];
+        std::cout << "---------------------------------------------------------"
+                     "----\n\n\n";
+        std::cout << v1.length() / C << " " << (v0 * drag).length() << " "
+                  << f.length() << "\n";
+      }
+    }
+    for (int i = 0; i < velocities.size(); i++) {
       sf::Vector2f dis = velocities[i] * elapsed.asSeconds();
       moveVertex(i, dis);
+
       handleBoundary(i, width, height);
-      velocities[i] *=
-          std::exp(std::log(drag) * elapsed.asSeconds());
     }
   }
 
@@ -159,14 +201,7 @@ private:
   std::vector<sf::Vector2f> velocities;
   std::vector<sf::Vector2f> positions;
 
-  inline float calculateForce(float r) {
-
-    return 1 / (r * r) * (r - 1) * (r - 50);
-    return 500000 * std::exp(r * -0.000001) *
-           std::sin(sf::priv::pi * 2 * numRegions / cutoff *
-                    r) /
-           r;
-  }
+  inline float calculateForce(float r) { return 100000.0 / (0.1 + r); }
 
   void initVertices() {
 
@@ -195,6 +230,12 @@ private:
   }
 
   inline void moveVertex(int i, sf::Vector2f dis) {
+    if (dis.lengthSquared() < -1) {
+      std::cout << i << " " << dis.x << " " << dis.y << "vert "
+
+                << m_vertices[i * 3].position.x << " "
+                << m_vertices[i * 3].position.y << "\n";
+    }
     positions[i] += dis;
     if (shape == Shape::Triangle) {
 
@@ -217,10 +258,10 @@ private:
   inline void handleBoundary(int i, float width, float height) {
 
     if (edge == Edge::Bounce) {
-      if (positions[i].x < 0) {
+      if (positions[i].x < 10) {
         velocities[i].x = std::abs(velocities[i].x);
       }
-      if (positions[i].y < 0) {
+      if (positions[i].y < 10) {
 
         velocities[i].y = std::abs(velocities[i].y);
       }
@@ -252,8 +293,8 @@ private:
   void printTypes() {
     std::cout << "Size: " << typeData.size() << "\n";
     for (ParticleType p : typeData) {
-      std::cout << "Color: " << static_cast<int>(p.color.r)
-                << " " << static_cast<int>(p.color.g) << " "
+      std::cout << "Color: " << static_cast<int>(p.color.r) << " "
+                << static_cast<int>(p.color.g) << " "
                 << static_cast<int>(p.color.b) << "\n";
     }
 
@@ -263,15 +304,13 @@ private:
         if (coffi >= 0.0f) {
           std::cout << " ";
         }
-        std::cout << std::fixed << std::setprecision(3) << coffi
-                  << "  ";
+        std::cout << std::fixed << std::setprecision(3) << coffi << "  ";
       }
       std::cout << "\n";
     }
   }
 
-  void draw(sf::RenderTarget &target,
-            sf::RenderStates states) const override {
+  void draw(sf::RenderTarget &target, sf::RenderStates states) const override {
 
     states.transform *= getTransform();
 
@@ -287,14 +326,13 @@ float drag = 0.05, speed = 1;
 float w, h;
 bool isClean = true;
 
-void handleInput(sf::RenderWindow *window,
-                 Particles *particles) {
+void handleInput(sf::RenderWindow *window, Particles *particles) {
 
   window->handleEvents(
       [&window](const sf::Event::Closed &) { window->close(); },
       [&](const sf::Event::MouseButtonPressed &mouse) {
-        std::cout << "Mouse clicked at: " << mouse.position.x
-                  << ", " << mouse.position.y << "\n";
+        std::cout << "Mouse clicked at: " << mouse.position.x << ", "
+                  << mouse.position.y << "\n";
         particles->reset(w, h);
       },
       [&](const sf::Event::KeyPressed &key) {
@@ -341,8 +379,8 @@ void handleInput(sf::RenderWindow *window,
       });
 }
 
-void draw(sf::RenderWindow *window, Particles *par,
-          sf::Time time, sf::Text *fpsText) {
+void draw(sf::RenderWindow *window, Particles *par, sf::Time time,
+          sf::Text *fpsText) {
   if (isClean) {
     window->clear(sf::Color::Black);
   }
@@ -365,8 +403,7 @@ int main(int argc, char **argv) {
   infoText.setPosition({10.f, 10.f});
   infoText.setString("102");
 
-  sf::RenderWindow window(sf::VideoMode({300, 300}),
-                          "My window");
+  sf::RenderWindow window(sf::VideoMode({300, 300}), "My window");
   if (argc != 3) {
     std::cout << "Usage main numberParticle numberTypes";
     return -1;
@@ -378,8 +415,8 @@ int main(int argc, char **argv) {
   w = static_cast<float>(size.x);
   h = static_cast<float>(size.y);
   Particles particles(numParticles, numParticleTypes,
-                      Particles::Shape::Triangle,
-                      Particles::Edge::Curve, w, h, drag);
+                      Particles::Shape::Triangle, Particles::Edge::Curve, w, h,
+                      drag);
   sf::Time totalTime(sf::Time::Zero);
   sf::Clock clock;
   int frameNumber = 0;
@@ -392,18 +429,18 @@ int main(int argc, char **argv) {
     frameNumber += 1;
 
     if (totalTime.asSeconds() > 0.1f) {
-      int fps =
-          static_cast<int>(frameNumber / totalTime.asSeconds());
+      int fps = static_cast<int>(frameNumber / totalTime.asSeconds());
       infoText.setString(
-          "FPS: " + std::to_string(fps) +
-          "\nSpeed: " + std::to_string(speed) + "\nDrag: " +
-          std::to_string(particles.drag) + "\nRange: " +
-          std::to_string(static_cast<int>(particles.cutoff)));
+          "FPS: " + std::to_string(fps) + "\nSpeed: " + std::to_string(speed) +
+          "\nDrag: " + std::to_string(particles.drag) +
+          "\nRange: " + std::to_string(static_cast<int>(particles.cutoff)));
       totalTime = sf::Time::Zero;
       frameNumber = 0;
     }
+
     // std::cout << 1 / time.asSeconds() << "\n";
     handleInput(&window, &particles);
+
     particles.update(time * speed, w, h);
     draw(&window, &particles, time, &infoText);
   }
