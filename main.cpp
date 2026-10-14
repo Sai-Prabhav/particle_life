@@ -1,3 +1,4 @@
+#include "json.hpp"
 #include "my_rand.h"
 #include <SFML/Graphics.hpp>
 #include <SFML/Graphics/Text.hpp>
@@ -10,33 +11,49 @@
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+using json = nlohmann::json;
 
-constexpr double C = 100.0;
+struct ParticleType {
+  float mass;
+  sf::Color color;
+  float radius;
+  std::vector<float> coff;
+  std::vector<float> coff_near;
+  std::vector<float> coff_far;
+};
+
+namespace sf {
+inline void to_json(json &j, const Color &c) {
+  j = json::array({c.r, c.g, c.b, c.a});
+}
+inline void from_json(const json &j, Color &c) {
+  c = Color(j.at(0).get<std::uint8_t>(), j.at(1).get<std::uint8_t>(),
+            j.at(2).get<std::uint8_t>(), j.at(3).get<std::uint8_t>());
+}
+} // namespace sf
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ParticleType, mass, color, radius, coff,
+                                   coff_near, coff_far)
+
+constexpr double C = 1000.0;
 constexpr float sign(float x) { return x < 0 ? -1 : 1; }
 constexpr float min(float x, float y) { return x < y ? x : y; }
 
 class Particles : public sf::Drawable, public sf::Transformable {
 public:
   float drag;
-  struct ParticleType {
-    float mass;
-    sf::Color color;
-    float radius;
-    std::vector<float> coff;
-    std::vector<float> coff_near;
-    std::vector<float> coff_far;
-  };
 
   enum class Shape { Point, Triangle };
   enum class Edge { Pass, Bounce, Curve };
 
   Shape shape = Shape::Triangle;
   Edge edge;
-  float cutoff = 100;
+  float cutoff = 1000000;
   static std::vector<ParticleType> randTypes(int typeCount) {
     std::vector<ParticleType> typeData(typeCount);
     for (int i = 0; i < typeCount; i++) {
@@ -53,12 +70,12 @@ public:
                          static_cast<uint8_t>(randInt(205) + 50)},
                         5,
                         randFloats(-1.f, 1.f, typeCount),
-                        randFloats(100.f, 10.f, typeCount),
+                        randFloats(10.f, 1.f, typeCount),
                         randFloats(-10.f, -1.f, typeCount)};
   }
 
   Particles(int particleCount, int typeCount, Shape shape_, Edge edge_, float w,
-            float h, float drag_)
+            float h, float drag_, std::string path)
       : typeData(typeCount), typeId(particleCount),
         velocities(particleCount, {0.0f, 0.0f}), positions(particleCount) {
     if (shape == Shape::Point) {
@@ -73,7 +90,12 @@ public:
     edge = edge_;
     shape = shape_;
     drag = drag_;
-    typeData = randTypes(typeCount);
+    if (path.empty()) {
+      typeData = randTypes(typeCount);
+    } else {
+      std::ifstream in(path);
+      typeData = json::parse(in).get<std::vector<ParticleType>>();
+    }
     initVertices();
     printTypes();
 
@@ -89,11 +111,14 @@ public:
   void reset(float w, float h) {
 
     int particleCount = velocities.size();
-    int typeCount = typeData.size();
-    typeData = randTypes(typeCount);
-
+    int myTypeCount = typeData.size();
+    typeData = randTypes(myTypeCount);
+    typeCount += 1;
+    auto path = "particle_" + std::to_string(typeCount) + ".json";
+    std::ofstream(path) << json(typeData).dump(2);
+    std::cout << "saved to path: " << path << "\n";
     for (int i = 0; i < particleCount; i++) {
-      typeId[i] = randInt(typeCount);
+      typeId[i] = randInt(myTypeCount);
 
       sf::Vector2f p = randPos(h, w, typeData[typeId[i]].radius);
       positions[i] = p;
@@ -119,7 +144,7 @@ public:
     double error = false;
     const float cutoff2 = cutoff * cutoff;
     const float cutoff_far2 = cutoff2 * 0.5f * 0.5f;
-    const float cutoff_near2 = 2;
+    const float cutoff_near2 = 0;
 #pragma omp parallel for simd
     for (int i = 0; i < velocities.size(); i++) {
       float force_x = 0.0, force_y = 0.0;
@@ -127,7 +152,6 @@ public:
 
         float dx = positions[i].x - positions[j].x;
         float dy = positions[i].y - positions[j].y;
-        float d2;
         if (edge == Edge::Curve) {
           if (std::abs(dx) > width / 2.0) {
             dx = -sign(dx) * (width - std::abs(dx));
@@ -136,8 +160,9 @@ public:
             dy = -sign(dy) * (height - std::abs(dy));
           }
         }
-        d2 = dx * dx + dy * dy;
+        float d2 = dx * dx + dy * dy;
         float cf = 0.0;
+        float d = std::sqrt(d2);
         if (d2 > cutoff2 || d2 < 1 || i == j) {
           continue;
         } else if (d2 > cutoff_far2) {
@@ -147,11 +172,8 @@ public:
         } else if (d2 <= cutoff_near2) {
           cf = typeData[typeId[i]].coff_near[typeId[j]];
         }
-        float d = std::sqrt(d2 + 0.01);
-        force_x +=
-            (cf * typeData[typeId[j]].mass * dx) * calculateForce(d2) / d;
-        force_y +=
-            (cf * typeData[typeId[j]].mass * dy) * calculateForce(d2) / d;
+        force_x += (cf * dx) * calculateForce(d);
+        force_y += (cf * dy) * calculateForce(d);
       }
 
       /**
@@ -163,33 +185,28 @@ public:
        * where gamma = 1 / sqrt(1 - v^2/c^2) is the Lorentz factor
        *
        * General solution with initial condition v(0) = v0:
-       *   v(t) = (gamma_0 * m * v0 + F*t) / sqrt(m^2 + (gamma_0*m*v0
-       * +F*t)^2/c^2)
+       *   v(t) = (gamma_0 * m * v0 + F*t) / sqrt(m^2 +
+       * (gamma_0*m*v0+F*t)^2/c^2)
        **/
 
-      // std::cout << "total force done\n";
       sf::Vector2f force{force_x, force_y};
       auto v0 = velocities[i];
       auto f = force - v0 * drag;
       float m = typeData[typeId[i]].mass;
       float t = elapsed.asSeconds();
-
-      float g0 = 1.0 / std::sqrt(1.0 - v0.lengthSquared() / (C * C));
-      const sf::Vector2f vel1 = g0 * v0 + f * (t / m);
-      velocities[i] = (vel1 / static_cast<float>(std::sqrt(
-                                  1.0f + vel1.lengthSquared() / (C * C))));
-      if (velocities[i].lengthSquared() >= C * C) {
-        auto v1 = velocities[i];
-        std::cout << "---------------------------------------------------------"
-                     "----\n\n\n";
-        std::cout << v1.length() / C << " " << (v0 * drag).length() << " "
-                  << f.length() << "\n";
+      float mod_v0 = v0.length();
+      const float treshold = 1.0 - 1e-3;
+      if (mod_v0 > treshold * C) {
+        v0 = v0 * static_cast<float>(treshold * C) / mod_v0;
       }
+      float g0 = 1.0 / std::sqrt(1.0 - v0.lengthSquared() / (C * C));
+      const sf::Vector2f vel1 = g0 * m * v0 + f * t;
+      velocities[i] = (vel1 / static_cast<float>(std::sqrt(
+                                  m * m + vel1.lengthSquared() / (C * C))));
     }
     for (int i = 0; i < velocities.size(); i++) {
       sf::Vector2f dis = velocities[i] * elapsed.asSeconds();
       moveVertex(i, dis);
-
       handleBoundary(i, width, height);
     }
   }
@@ -200,8 +217,9 @@ private:
   std::vector<int> typeId;
   std::vector<sf::Vector2f> velocities;
   std::vector<sf::Vector2f> positions;
+  int typeCount = 0;
 
-  inline float calculateForce(float r) { return 100000.0 / (0.1 + r); }
+  inline float calculateForce(float r) { return 10.0 / (r * r); }
 
   void initVertices() {
 
@@ -416,7 +434,7 @@ int main(int argc, char **argv) {
   h = static_cast<float>(size.y);
   Particles particles(numParticles, numParticleTypes,
                       Particles::Shape::Triangle, Particles::Edge::Curve, w, h,
-                      drag);
+                      drag, "");
   sf::Time totalTime(sf::Time::Zero);
   sf::Clock clock;
   int frameNumber = 0;
