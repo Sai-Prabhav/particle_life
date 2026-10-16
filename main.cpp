@@ -23,8 +23,6 @@ struct ParticleType {
   sf::Color color;
   float radius;
   std::vector<float> coff;
-  std::vector<float> coff_near;
-  std::vector<float> coff_far;
 };
 
 namespace sf {
@@ -37,8 +35,7 @@ inline void from_json(const json &j, Color &c) {
 }
 } // namespace sf
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ParticleType, mass, color, radius, coff,
-                                   coff_near, coff_far)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ParticleType, mass, color, radius, coff)
 
 constexpr double C = 10000.0;
 constexpr float sign(float x) { return x < 0 ? -1 : 1; }
@@ -64,14 +61,14 @@ public:
 
   static ParticleType randType(int typeCount) {
 
-    return ParticleType{randFloat(0.1f, 1.0f),
-                        {static_cast<uint8_t>(randInt(205) + 50),
-                         static_cast<uint8_t>(randInt(205) + 50),
-                         static_cast<uint8_t>(randInt(205) + 50)},
-                        5,
-                        randFloats(-1.f, 1.f, typeCount),
-                        randFloats(10.f, 1.f, typeCount),
-                        randFloats(-10.f, -1.f, typeCount)};
+    return ParticleType{
+        randFloat(0.1f, 1.0f),
+        {static_cast<uint8_t>(randInt(205) + 50),
+         static_cast<uint8_t>(randInt(205) + 50),
+         static_cast<uint8_t>(randInt(205) + 50)},
+        5,
+        randFloats(-1.f, 1.f, typeCount),
+    };
   }
 
   Particles(int particleCount, int typeCount, Shape shape_, Edge edge_, float w,
@@ -145,36 +142,26 @@ public:
 
   void update(sf::Time elapsed, float width, float height) {
     double error = false;
-    const float cutoff2 = cutoff * cutoff;
-    const float cutoff_far2 = cutoff2 * 0.5f * 0.5f;
-    const float cutoff_near2 = 0;
-#pragma omp parallel for simd
+#pragma omp parallel for schedule(guided, 8)
     for (int i = 0; i < velocities.size(); i++) {
       float force_x = 0.0, force_y = 0.0;
+
       for (int j = 0; j < velocities.size(); j++) {
 
         float dx = positions[i].x - positions[j].x;
         float dy = positions[i].y - positions[j].y;
         if (edge == Edge::Curve) {
-          if (std::abs(dx) > width / 2.0) {
-            dx = -sign(dx) * (width - std::abs(dx));
-          }
-          if (std::abs(dy) > height / 2.0) {
-            dy = -sign(dy) * (height - std::abs(dy));
-          }
+          dx -= width * std::round(dx / width);
+          dy -= height * std::round(dy / height);
         }
         float d2 = dx * dx + dy * dy;
         float cf = 0.0;
         float d = std::sqrt(d2);
-        if (d2 > cutoff2 || d2 < 1 || i == j) {
+        if (d > cutoff || d < 1 || i == j) {
           continue;
-        } else if (d2 > cutoff_far2) {
-          cf = typeData[typeId[i]].coff_far[typeId[j]];
-        } else if (d2 > cutoff_near2 && d2 <= cutoff_far2) {
-          cf = typeData[typeId[i]].coff[typeId[j]];
-        } else if (d2 <= cutoff_near2) {
-          cf = typeData[typeId[i]].coff_near[typeId[j]];
         }
+
+        cf = typeData[typeId[i]].coff[typeId[j]];
         force_x += (cf * dx) * calculateForce(d);
         force_y += (cf * dy) * calculateForce(d);
       }
@@ -207,6 +194,8 @@ public:
       velocities[i] = (vel1 / static_cast<float>(std::sqrt(
                                   m * m + vel1.lengthSquared() / (C * C))));
     }
+
+#pragma omp parallel for
     for (int i = 0; i < velocities.size(); i++) {
       sf::Vector2f dis = velocities[i] * elapsed.asSeconds();
       moveVertex(i, dis);
