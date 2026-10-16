@@ -40,7 +40,7 @@ inline void from_json(const json &j, Color &c) {
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ParticleType, mass, color, radius, coff,
                                    coff_near, coff_far)
 
-constexpr double C = 1000.0;
+constexpr double C = 10000.0;
 constexpr float sign(float x) { return x < 0 ? -1 : 1; }
 constexpr float min(float x, float y) { return x < y ? x : y; }
 
@@ -75,7 +75,7 @@ public:
   }
 
   Particles(int particleCount, int typeCount, Shape shape_, Edge edge_, float w,
-            float h, float drag_, std::string path)
+            float h, float drag_, std::string path_)
       : typeData(typeCount), typeId(particleCount),
         velocities(particleCount, {0.0f, 0.0f}), positions(particleCount) {
     if (shape == Shape::Point) {
@@ -90,10 +90,11 @@ public:
     edge = edge_;
     shape = shape_;
     drag = drag_;
-    if (path.empty()) {
+    if (path_.empty()) {
       typeData = randTypes(typeCount);
     } else {
-      std::ifstream in(path);
+      path = path_;
+      std::ifstream in(path_);
       typeData = json::parse(in).get<std::vector<ParticleType>>();
     }
     initVertices();
@@ -112,11 +113,13 @@ public:
 
     int particleCount = velocities.size();
     int myTypeCount = typeData.size();
-    typeData = randTypes(myTypeCount);
-    typeCount += 1;
-    auto path = "particle_" + std::to_string(typeCount) + ".json";
-    std::ofstream(path) << json(typeData).dump(2);
-    std::cout << "saved to path: " << path << "\n";
+    if (path.empty()) {
+      typeData = randTypes(myTypeCount);
+      typeCount += 1;
+      auto path = "particle_" + std::to_string(typeCount) + ".json";
+      std::ofstream(path) << json(typeData).dump(2);
+      std::cout << "saved to path: " << path << "\n";
+    }
     for (int i = 0; i < particleCount; i++) {
       typeId[i] = randInt(myTypeCount);
 
@@ -218,6 +221,7 @@ private:
   std::vector<sf::Vector2f> velocities;
   std::vector<sf::Vector2f> positions;
   int typeCount = 0;
+  std::string path;
 
   inline float calculateForce(float r) { return 10.0 / (r * r); }
 
@@ -422,10 +426,15 @@ int main(int argc, char **argv) {
   infoText.setString("102");
 
   sf::RenderWindow window(sf::VideoMode({300, 300}), "My window");
-  if (argc != 3) {
-    std::cout << "Usage main numberParticle numberTypes";
+  if (argc != 4 and argc != 3) {
+    std::cout << "Usage main numberParticle numberTypes [path]";
     return -1;
   }
+  std::string path = "";
+  if (argc == 4) {
+    path = argv[3];
+  }
+  std::cout << "path is " << path << "\n";
   numParticles = std::stoi(argv[1]);
   numParticleTypes = std::stoi(argv[2]);
 
@@ -434,14 +443,13 @@ int main(int argc, char **argv) {
   h = static_cast<float>(size.y);
   Particles particles(numParticles, numParticleTypes,
                       Particles::Shape::Triangle, Particles::Edge::Curve, w, h,
-                      drag, "");
+                      drag, path);
   sf::Time totalTime(sf::Time::Zero);
   sf::Clock clock;
   int frameNumber = 0;
 
   window.draw(infoText);
   while (window.isOpen()) {
-
     auto time = clock.restart();
     totalTime += time;
     frameNumber += 1;
