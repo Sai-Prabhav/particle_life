@@ -142,7 +142,7 @@ public:
 
   void update(sf::Time elapsed, float width, float height) {
     double error = false;
-#pragma omp parallel for schedule(guided, 8)
+#pragma omp parallel for
     for (int i = 0; i < velocities.size(); i++) {
       float force_x = 0.0, force_y = 0.0;
 
