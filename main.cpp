@@ -1,4 +1,5 @@
 #include "json.hpp"
+
 #include "my_rand.h"
 #include <SFML/Graphics.hpp>
 #include <SFML/Graphics/Text.hpp>
@@ -142,11 +143,12 @@ public:
 
   void update(sf::Time elapsed, float width, float height) {
     double error = false;
+    int particle_count = velocities.size();
 #pragma omp parallel for
-    for (int i = 0; i < velocities.size(); i++) {
+    for (int i = 0; i < particle_count; i++) {
       float force_x = 0.0, force_y = 0.0;
 
-      for (int j = 0; j < velocities.size(); j++) {
+      for (int j = 0; j < particle_count; j++) {
 
         float dx = positions[i].x - positions[j].x;
         float dy = positions[i].y - positions[j].y;
@@ -196,7 +198,7 @@ public:
     }
 
 #pragma omp parallel for
-    for (int i = 0; i < velocities.size(); i++) {
+    for (int i = 0; i < particle_count; i++) {
       sf::Vector2f dis = velocities[i] * elapsed.asSeconds();
       moveVertex(i, dis);
       handleBoundary(i, width, height);
@@ -212,7 +214,7 @@ private:
   int typeCount = 0;
   std::string path;
 
-  inline float calculateForce(float r) { return 10.0 / (r * r); }
+  constexpr float calculateForce(float r) { return 10.0 / (r * r); }
 
   void initVertices() {
 
@@ -456,7 +458,7 @@ int main(int argc, char **argv) {
     // std::cout << 1 / time.asSeconds() << "\n";
     handleInput(&window, &particles);
 
-    particles.update(time * speed, w, h);
+    particles.update(sf::seconds(0.001) * speed, w, h);
     draw(&window, &particles, time, &infoText);
   }
 }
