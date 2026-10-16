@@ -83,11 +83,8 @@ After launching, use the `[` and `]` keys to adjust the speed, and `;` and `'` k
 
 ## TODO
 
-- [ ] Implement different types of functions to calculate the force between particles.
 - [ ] Add keyboard commands to cycle through different boundary handling modes (e.g., Bounce, Pass, Curve).
 - [ ] Add keyboard commands to change the shape of the particles (e.g., from Triangle to Point).
-- [ ] Add ability to define and use more particle shapes.
-- [ ] Add keyboard commands to change the radius of particles.
 - [ ] Implement a feature to take screenshots and record videos of the simulation.
-- [ ] Improve velocity normalization to prevent particles from reaching excessively high speeds.
+- [x] Improve velocity normalization to prevent particles from reaching excessively high speeds.
 
