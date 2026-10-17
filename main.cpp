@@ -143,11 +143,12 @@ public:
 
   void update(sf::Time elapsed, float width, float height) {
     double error = false;
-    int particle_count = velocities.size();
+    const int particle_count = velocities.size();
+    const float t = elapsed.asSeconds();
 #pragma omp parallel for
     for (int i = 0; i < particle_count; i++) {
       float force_x = 0.0, force_y = 0.0;
-
+      const float *coff = typeData[typeId[i]].coff.data();
       for (int j = 0; j < particle_count; j++) {
 
         float dx = positions[i].x - positions[j].x;
@@ -158,14 +159,13 @@ public:
         }
         float d2 = dx * dx + dy * dy;
         float cf = 0.0;
-        float d = std::sqrt(d2);
-        if (d > cutoff || d < 1 || i == j) {
+        if (d2 > cutoff || d2 < 1 || i == j) {
           continue;
         }
 
-        cf = typeData[typeId[i]].coff[typeId[j]];
-        force_x += (cf * dx) * calculateForce(d);
-        force_y += (cf * dy) * calculateForce(d);
+        cf = coff[typeId[j]] * calculateForce(d2);
+        force_x += (cf * dx);
+        force_y += (cf * dy);
       }
 
       /**
@@ -185,13 +185,13 @@ public:
       auto v0 = velocities[i];
       auto f = force - v0 * drag;
       float m = typeData[typeId[i]].mass;
-      float t = elapsed.asSeconds();
       float mod_v0 = v0.length();
       const float treshold = 1.0 - 1e-3;
       if (mod_v0 > treshold * C) {
         v0 = v0 * static_cast<float>(treshold * C) / mod_v0;
+        mod_v0 = treshold * C;
       }
-      float g0 = 1.0 / std::sqrt(1.0 - v0.lengthSquared() / (C * C));
+      float g0 = 1.0 / std::sqrt(1.0 - mod_v0 * mod_v0 / (C * C));
       const sf::Vector2f vel1 = g0 * m * v0 + f * t;
       velocities[i] = (vel1 / static_cast<float>(std::sqrt(
                                   m * m + vel1.lengthSquared() / (C * C))));
@@ -214,7 +214,7 @@ private:
   int typeCount = 0;
   std::string path;
 
-  constexpr float calculateForce(float r) { return 10.0 / (r * r); }
+  constexpr float calculateForce(float r) { return 10.0f / (r); }
 
   void initVertices() {
 
